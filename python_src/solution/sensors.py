@@ -43,11 +43,3 @@ def moving_averages(distance):
     if len(readings) == 0:
         return 0
     return round(curr_sum/len(readings), 2)
-
-
-# while True:
-#     distance = get_distance()
-#     avg_distance = moving_averages(distance)
-#     print(avg_distance)
-#     print(get_ir())
-#     time.sleep(1)

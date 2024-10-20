@@ -1,10 +1,41 @@
 import cv2
 import numpy as np
 
+def undistored(frame):
+    cameraMatrix = np.array([[440.07401813,   0.        , 353.59733958],
+       [  0.        , 438.77057134, 272.90562868],
+       [  0.        ,   0.        ,   1.        ]])
+    dist = np.array([[-0.2448454 , -0.02761594,  0.00730485,  0.00346357,  0.03795141]])
+
+    h, w = frame.shape[:2]
+    newcameramtx, _ = cv2.getOptimalNewCameraMatrix(cameraMatrix, dist, (w,h), 1, (w,h))
+    dst = cv2.undistort(frame, cameraMatrix, dist, None, newcameramtx)
+
+    return dst
+
+def get_distance(contour):
+    D = 0.05
+    f = 438.27021789550776
+
+    obj = cv2.minAreaRect(contour)
+    d = obj[1][0]
+
+    return D * f / d
+
+
+def white_balance(img):
+    result = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    avg_a = np.average(result[:, :, 1])
+    avg_b = np.average(result[:, :, 2])
+    result[:, :, 1] = result[:, :, 1] - ((avg_a - 128) * (result[:, :, 0] / 255.0) * 1.1)
+    result[:, :, 2] = result[:, :, 2] - ((avg_b - 128) * (result[:, :, 0] / 255.0) * 1.1)
+    result = cv2.cvtColor(result, cv2.COLOR_LAB2BGR)
+    return result
+
 def align_histogram(frame):
     frame_rgb = cv2.split(frame)
-    mean1 = np.median(frame_rgb)
-    desired_mean = 60
+    mean1 = np.mean(frame_rgb)
+    desired_mean = 50
     alpha = mean1 / desired_mean
     Inew_RGB = []
     for layer in frame_rgb:
@@ -33,6 +64,9 @@ def follow_cube(frame):
 
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     contours = sorted(contours, key=cv2.contourArea, )
+    # if len(contours) > 0:
+    #     return contours[0]
+
     for i in range(len(contours)):
         if cv2.contourArea(contours[i]) > 100:
             # cv2.drawContours(frame, contours[i], -1, (8, 255, 8), 3)

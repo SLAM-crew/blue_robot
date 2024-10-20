@@ -3,16 +3,19 @@ import signal
 import sys
 import time
 import curses
-from cv import follow_cube, align_histogram
+import numpy as np
+from cv import follow_cube, align_histogram, white_balance, undistored, get_distance
 from manipulator import init_pose, grab_item, put_item
 from motors import set_velocities, stop
 from team_light import turn_on_red_light_via_i2c, turn_on_green_light_via_i2c
 from sensors import get_ir
 from xr_pid import PID
 
-RECORD = True
-TELEOP = True
+RECORD = False
+TELEOP = False
 GREEN = True
+
+K = 0.84
 
 def teleop(stdscr):
     if GREEN:
@@ -21,7 +24,7 @@ def teleop(stdscr):
         turn_on_red_light_via_i2c()
     init_pose()
     if RECORD:
-        out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'MPEG'), 30, (640, 240))
+        out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'MPEG'), 30, (320, 240))
         cap = cv2.VideoCapture('/dev/video0')
     curses.cbreak()  
     stdscr.keypad(True) 
@@ -31,15 +34,17 @@ def teleop(stdscr):
 
     stdscr.addstr(0, 0, "Управляйте роботом с помощью клавиш W, A, S, D. Для выхода нажмите 'q'.")
 
-    speed = 30
+    speed = 40
     
     while True:
         if RECORD:
             _, frame = cap.read()
+            # frame = undistored(frame)
             frame = cv2.rotate(frame, cv2.ROTATE_180)
             y, x, _ = frame.shape
-            frame = frame[int(0.5 * y):y, 0:x]
+            frame = frame[int(0.5 * y):y, int(0.25 * x):x - int(0.25 * x)]
             frame = align_histogram(frame)
+            frame = white_balance(frame)
             out.write(frame)
         key = stdscr.getch()
         
@@ -59,13 +64,13 @@ def teleop(stdscr):
         
         elif key != -1:
             if key == ord('w'):
-                set_velocities(speed, speed)        
+                set_velocities(speed, K*speed)        
             elif key == ord('s'):
-                set_velocities(-speed, -speed)   
+                set_velocities(-speed, -K*speed)   
             elif key == ord('a'):
-                set_velocities(-speed, speed)
+                set_velocities(-speed, K*speed)
             elif key == ord('d'):
-                set_velocities(speed, -speed)
+                set_velocities(speed, -K*speed)
             elif key == ord('x'):
                 stop()
         time.sleep(0.1)
@@ -77,12 +82,15 @@ class Solution():
         else:
             turn_on_red_light_via_i2c()
         init_pose()
+        self.linear_velocity = 0.25 
+        self.angular_velocity = 1.58
+        self.motor_pwm = 40
         self.cap = cv2.VideoCapture('/dev/video0')
         self.pid = PID(0.03, 0.09, 0.0005)
         self.pid.setSampleTime(0.005)
         self.pid.setPoint(320)
         if RECORD:
-            self.out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'MPEG'), 30, (640,240))
+            self.out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'MPEG'), 30, (320,240))
         signal.signal(signal.SIGINT, self.shutdown)
         print('Init')
 
@@ -94,6 +102,28 @@ class Solution():
         self.cap.release()
         print('Shutdown')
         sys.exit(0)
+    
+    def rotate(self, angle):
+        sign = np.sign(angle)
+        dt = abs(angle) / self.angular_velocity
+        current_time = time.time()
+        last_time = current_time
+        set_velocities(sign * self.motor_pwm, -sign * K * self.motor_pwm)
+        while abs(current_time - last_time) < dt:
+            # print(current_time)
+            current_time = time.time()
+        stop()
+
+    
+    def move_forward(self, distance):
+        dt = distance / self.linear_velocity
+        current_time = time.time()
+        last_time = current_time
+        set_velocities(self.motor_pwm, K * self.motor_pwm)
+        while abs(current_time - last_time) < dt:
+            # print(current_time)
+            current_time = time.time()
+        stop()
 
     def spin(self):
         while True:
@@ -111,10 +141,13 @@ class Solution():
                 self.shutdown(None, None)
 
             _, frame = self.cap.read()
+            # frame = undistored(frame)
             frame = cv2.rotate(frame, cv2.ROTATE_180)
             y, x, _ = frame.shape
+            # frame = frame[int(0.5 * y):y, int(0.25 * x):x - int(0.25 * x)]
             frame = frame[int(0.5 * y):y, 0:x]
             frame = align_histogram(frame)
+            frame = white_balance(frame)
             if RECORD:
                 self.out.write(frame)
             res = follow_cube(frame)
@@ -130,4 +163,18 @@ if __name__ == "__main__":
     if TELEOP:
         curses.wrapper(teleop)
     else:
-        Solution().spin()
+        sol = Solution()
+        # sol.spin()
+        sol.move_forward(1)
+        time.sleep(0.5)
+        sol.rotate(np.pi / 2)
+        time.sleep(0.5)
+        sol.move_forward(0.5)
+        time.sleep(0.5)
+        sol.rotate(np.pi / 2)
+        time.sleep(0.5)
+        sol.move_forward(0.25)
+        time.sleep(0.5)
+        sol.rotate(-np.pi / 2)
+        time.sleep(0.5)
+        sol.move_forward(2)
