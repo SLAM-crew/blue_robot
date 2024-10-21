@@ -47,7 +47,7 @@ def align_histogram(frame):
     Inew_1 = (255*Inew).clip(0, 255).astype(np.uint8)
     return Inew_1
 
-def follow_cube(frame):
+def apply_mask(frame):
     frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     blurVal = 3
@@ -63,18 +63,25 @@ def follow_cube(frame):
     edges = cv2.Canny(mask, lowThresh, high_thresh)
 
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    contours = sorted(contours, key=cv2.contourArea, )
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
     # if len(contours) > 0:
     #     return contours[0]
 
     for i in range(len(contours)):
         if cv2.contourArea(contours[i]) > 100:
-            # cv2.drawContours(frame, contours[i], -1, (8, 255, 8), 3)
-            M = cv2.moments(contours[i])
-            if M['m00'] != 0:
-                cx = int(M['m10'] / M['m00'])
-                cy = int(M['m01'] / M['m00'])
-                return [cx, cy]
-            # cv2.putText(frame, str(i) + '_(' + str(cx) + ':' + str(cy) + ')', (cx + 10, cy - 40),
-            #             cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1)
-    # return frame
+            return contours[i]
+    #         cv2.drawContours(frame, contours[i], -1, (8, 255, 8), 3)
+    #         M = cv2.moments(contours[i])
+    #         if M['m00'] != 0:
+    #             cx = int(M['m10'] / M['m00'])
+    #             cy = int(M['m01'] / M['m00'])
+    #             return [cx, cy]
+    #         cv2.putText(frame, str(i) + '_(' + str(cx) + ':' + str(cy) + ')', (cx + 10, cy - 40),
+    #                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1)
+
+def object_center(contour):
+    M = cv2.moments(contour)
+    if M['m00'] != 0:
+        cx = int(M['m10'] / M['m00'])
+        cy = int(M['m01'] / M['m00'])
+        return [cx, cy]

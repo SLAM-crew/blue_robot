@@ -4,76 +4,45 @@ import sys
 import time
 import curses
 import numpy as np
-from cv import follow_cube, align_histogram, white_balance, undistored, get_distance
-from manipulator import init_pose, grab_item, put_item
+from teleop import teleop
+from cv import apply_mask, align_histogram, white_balance, object_center
+from manipulator import init_pose, grab_item
 from motors import set_velocities, stop
 from team_light import turn_on_red_light_via_i2c, turn_on_green_light_via_i2c
 from sensors import get_ir
+from flask import Flask, request, jsonify
 from xr_pid import PID
+import threading
 
-RECORD = False
+RECORD = True
 TELEOP = False
 GREEN = True
-
 K = 0.84
+CUBE_HUNT = False
 
-def teleop(stdscr):
-    if GREEN:
-            turn_on_green_light_via_i2c()
-    else:
-        turn_on_red_light_via_i2c()
-    init_pose()
-    if RECORD:
-        out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'MPEG'), 30, (320, 240))
-        cap = cv2.VideoCapture('/dev/video0')
-    curses.cbreak()  
-    stdscr.keypad(True) 
-    stdscr.nodelay(True)
-    stdscr.clear()
-    stdscr.refresh()
+trajectory = []
+app = Flask(__name__)
 
-    stdscr.addstr(0, 0, "Управляйте роботом с помощью клавиш W, A, S, D. Для выхода нажмите 'q'.")
+def handle_received_trajectory(received_poins):
+    global trajectory, CUBE_HUNT
+    trajectory = received_poins
+    CUBE_HUNT = True
 
-    speed = 40
-    
-    while True:
-        if RECORD:
-            _, frame = cap.read()
-            # frame = undistored(frame)
-            frame = cv2.rotate(frame, cv2.ROTATE_180)
-            y, x, _ = frame.shape
-            frame = frame[int(0.5 * y):y, int(0.25 * x):x - int(0.25 * x)]
-            frame = align_histogram(frame)
-            frame = white_balance(frame)
-            out.write(frame)
-        key = stdscr.getch()
-        
-        if key == ord('q'):
-            if RECORD:
-                out.release()
-                cap.release()
-            break 
-        
-        if key == ord('+') and speed < 100:
-            speed += 1
-            stdscr.addstr(2, 0, f"Текущая скорость: {speed:3d}   ")
-        
-        elif key == ord('-') and speed > 0:
-            speed -= 1 
-            stdscr.addstr(2, 0, f"Текущая скорость: {speed:3d}   ")
-        
-        elif key != -1:
-            if key == ord('w'):
-                set_velocities(speed, K*speed)        
-            elif key == ord('s'):
-                set_velocities(-speed, -K*speed)   
-            elif key == ord('a'):
-                set_velocities(-speed, K*speed)
-            elif key == ord('d'):
-                set_velocities(speed, -K*speed)
-            elif key == ord('x'):
-                stop()
-        time.sleep(0.1)
+@app.route('/trajectory_points', methods=['POST'])
+def trajectory_handler():
+    try:
+        data = request.json
+        received_string = data.get('trajectory')
+
+        if received_string:
+            response_message = handle_received_trajectory(received_string)
+          
+            return jsonify({"status": "success", "message": response_message}), 200
+        else:
+            return jsonify({"status": "error", "message": "No string received"}), 400
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 class Solution():
     def __init__(self):
@@ -82,19 +51,31 @@ class Solution():
         else:
             turn_on_red_light_via_i2c()
         init_pose()
-        self.linear_velocity = 0.25 
-        self.angular_velocity = 1.58
+
+        self.linear_velocity = 0.2 # 0.25
+        self.angular_velocity = 1.4 # 1.58
         self.motor_pwm = 40
-        self.cap = cv2.VideoCapture('/dev/video0')
+
+        self.direction = 'N'
+
+        self.pose = None
+
         self.pid = PID(0.03, 0.09, 0.0005)
         self.pid.setSampleTime(0.005)
         self.pid.setPoint(320)
+        
+        self.cap = cv2.VideoCapture('/dev/video0')
         if RECORD:
-            self.out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'MPEG'), 30, (320,240))
+            self.out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'MPEG'), 30, (640,240))
+        
         signal.signal(signal.SIGINT, self.shutdown)
         print('Init')
 
     def shutdown(self, sig, frame):
+        if GREEN:
+            turn_on_red_light_via_i2c()
+        else:
+            turn_on_green_light_via_i2c()
         init_pose()
         stop()
         if RECORD:
@@ -110,10 +91,8 @@ class Solution():
         last_time = current_time
         set_velocities(sign * self.motor_pwm, -sign * K * self.motor_pwm)
         while abs(current_time - last_time) < dt:
-            # print(current_time)
             current_time = time.time()
         stop()
-
     
     def move_forward(self, distance):
         dt = distance / self.linear_velocity
@@ -121,60 +100,117 @@ class Solution():
         last_time = current_time
         set_velocities(self.motor_pwm, K * self.motor_pwm)
         while abs(current_time - last_time) < dt:
-            # print(current_time)
             current_time = time.time()
         stop()
 
     def spin(self):
+        global trajectory
         while True:
-            base_vel = 35
-            left_vel = base_vel
-            right_vel = base_vel
-            ir = get_ir()
-            if ir[2] == 0:
-                dst = 0.14
-                stop()
-                grab_item(dst)
-                init_pose()
-                time.sleep(2)
-                put_item(dst)
-                self.shutdown(None, None)
+            if len(trajectory) > 1:
+                self.pose = trajectory[0]
+                trajectory.pop(0)
+                target = trajectory[0]
+                if self.direction == 'N':
+                    if self.pose[0] == target[0]:
+                        if target[1] < self.pose[1]:
+                            self.rotate(-np.pi / 2)
+                            self.direction = 'W'
+                        else:
+                            self.rotate(np.pi / 2)
+                            self.direction = 'E'
+                        dst = abs(target[1] - self.pose[1])
+                    else:
+                        if target[0] > self.pose[0]:
+                            self.rotate(np.pi)
+                            self.direction = 'S'
+                        else:
+                            pass
+                        dst = abs(target[0] - self.pose[0])
 
-            _, frame = self.cap.read()
-            # frame = undistored(frame)
-            frame = cv2.rotate(frame, cv2.ROTATE_180)
-            y, x, _ = frame.shape
-            # frame = frame[int(0.5 * y):y, int(0.25 * x):x - int(0.25 * x)]
-            frame = frame[int(0.5 * y):y, 0:x]
-            frame = align_histogram(frame)
-            frame = white_balance(frame)
-            if RECORD:
-                self.out.write(frame)
-            res = follow_cube(frame)
-            if  res is not None:
-                x, _ = res
-                self.pid.update(x)
-                print(self.pid.output)
-                left_vel -= 2 * self.pid.output
-                right_vel += 2 * self.pid.output
-            set_velocities(left_vel, right_vel)
+                elif self.direction == 'S':
+                    if self.pose[0] == target[0]:
+                        if target[1] < self.pose[1]:
+                            self.rotate(np.pi / 2)
+                            self.direction = 'W'
+                        else:
+                            self.rotate(-np.pi / 2)
+                            self.direction = 'E'
+                        dst = abs(target[1] - self.pose[1])
+                    else:
+                        if target[0] < self.pose[0]:
+                            self.rotate(np.pi)
+                            self.direction = 'N'
+                        else:
+                            pass
+                        dst = abs(target[0] - self.pose[0])
+
+
+                elif self.direction == 'W':
+                    if self.pose[1] == target[1]:
+                        if target[0] < self.pose[0]:
+                            self.rotate(np.pi / 2)
+                            self.direction = 'N'
+                        else:
+                            self.rotate(-np.pi / 2)
+                            self.direction = 'S'
+                        dst = abs(target[0] - self.pose[0])
+                    else:
+                        if target[1] > self.pose[1]:
+                            self.rotate(np.pi)
+                            self.direction = 'E'
+                        else:
+                            pass
+                        dst = abs(target[1] - self.pose[1])
+
+
+                elif self.direction == 'E':
+                    if self.pose[1] == target[1]:
+                        if target[0] < self.pose[0]:
+                            self.rotate(-np.pi / 2)
+                            self.direction = 'N'
+                        else:
+                            self.rotate(np.pi / 2)
+                            self.direction = 'S'
+                        dst = abs(target[0] - self.pose[0])
+                    else:
+                        if target[1] > self.pose[1]:
+                            self.rotate(np.pi)
+                            self.direction = 'W'
+                        else:
+                            pass
+                        dst = abs(target[1] - self.pose[1])
+                self.move_forward(dst / 100)
+            else:
+                if CUBE_HUNT:
+                    self.shutdown(None, None)
+                    ir = get_ir()
+                    if ir[2] == 0:
+                        stop()
+                        grab_item(0.14)
+                        init_pose()
+                        self.shutdown(None, None)
+                    _, frame = self.cap.read()
+                    frame = cv2.rotate(frame, cv2.ROTATE_180)
+                    y, x, _ = frame.shape
+                    # frame = frame[int(0.5 * y):y, int(0.25 * x):x - int(0.25 * x)]
+                    frame = frame[int(0.5 * y):y, 0:x]
+                    frame = align_histogram(frame)
+                    frame = white_balance(frame)
+                    if RECORD:
+                        self.out.write(frame)
+                    contour = apply_mask(frame)
+                    if  contour is not None:
+                        x, _ = object_center(contour)
+                        self.pid.update(x)
+                        print(self.pid.output)
+                        left_vel = self.motor_pwm -  2 * self.pid.output
+                        right_vel = self.motor_pwm + 2 * self.pid.output
+                        set_velocities(left_vel, K * right_vel)           
 
 if __name__ == "__main__":
     if TELEOP:
         curses.wrapper(teleop)
     else:
         sol = Solution()
-        # sol.spin()
-        sol.move_forward(1)
-        time.sleep(0.5)
-        sol.rotate(np.pi / 2)
-        time.sleep(0.5)
-        sol.move_forward(0.5)
-        time.sleep(0.5)
-        sol.rotate(np.pi / 2)
-        time.sleep(0.5)
-        sol.move_forward(0.25)
-        time.sleep(0.5)
-        sol.rotate(-np.pi / 2)
-        time.sleep(0.5)
-        sol.move_forward(2)
+        threading.Thread(target= lambda: app.run(host='192.168.8.254', port=5000, debug=False)).start()
+        sol.spin()
