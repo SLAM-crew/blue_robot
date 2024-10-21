@@ -258,7 +258,7 @@ if __name__ == "__main__":
         sol = Solution()
         threading.Thread(target= lambda: app.run(host='192.168.2.53', port=5000, debug=False)).start()
         # sol.rotate(-np.pi / 2)
-        # sol.spin()
+        sol.spin()
         # set_velocities(-25, K * 25)
         # time.sleep(20)
         # stop()
