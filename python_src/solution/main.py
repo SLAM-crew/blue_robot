@@ -16,7 +16,7 @@ import threading
 
 RECORD = False
 TELEOP = False
-GREEN = False
+GREEN = True
 K = 0.75
 
 cube_hunt, ball_hunt, og_button_hunt, bp_button_hunt, basket_hunt = False, False, False, False, False
@@ -90,7 +90,7 @@ class Solution():
         init_pose()
 
         self.linear_velocity = 0.1175 
-        self.angular_velocity = 0.62
+        self.angular_velocity = 0.76 #0.62
         self.motor_pwm = 25
 
         self.direction = 'N'
@@ -256,9 +256,9 @@ if __name__ == "__main__":
         curses.wrapper(teleop)
     else:
         sol = Solution()
-        threading.Thread(target= lambda: app.run(host='192.168.2.53', port=5000, debug=False)).start()
-        # sol.rotate(-np.pi / 2)
-        sol.spin()
+        threading.Thread(target= lambda: app.run(host='192.168.8.254', port=5000, debug=False)).start()
+        sol.rotate(-np.pi / 2)
+        # sol.spin()
         # set_velocities(-25, K * 25)
         # time.sleep(20)
         # stop()
