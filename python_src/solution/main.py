@@ -14,32 +14,69 @@ from flask import Flask, request, jsonify
 from xr_pid import PID
 import threading
 
-RECORD = True
+RECORD = False
 TELEOP = False
-GREEN = True
-K = 0.84
-CUBE_HUNT = False
+GREEN = False
+K = 0.75
 
+cube_hunt, ball_hunt, og_button_hunt, bp_button_hunt, basket_hunt = False, False, False, False, False
 trajectory = []
+recover_angle = None
 app = Flask(__name__)
-
-def handle_received_trajectory(received_poins):
-    global trajectory, CUBE_HUNT
-    trajectory = received_poins
-    CUBE_HUNT = True
 
 @app.route('/trajectory_points', methods=['POST'])
 def trajectory_handler():
+    global trajectory
     try:
         data = request.json
         received_string = data.get('trajectory')
 
         if received_string:
-            response_message = handle_received_trajectory(received_string)
-          
-            return jsonify({"status": "success", "message": response_message}), 200
+            trajectory = received_string
+            return jsonify({"status": "success", "message": "trajectory recieved"}), 200
         else:
-            return jsonify({"status": "error", "message": "No string received"}), 400
+            return jsonify({"status": "error", "message": "No trajectory received"}), 400
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/flag', methods=['POST'])
+def flag_handler():
+    global cube_hunt, ball_hunt, og_button_hunt, bp_button_hunt, basket_hunt
+    try:
+        data = request.json
+        received_string = data.get('flag')
+
+        if received_string:
+            if received_string == 'cube':
+                cube_hunt = True
+            elif received_string == 'ball':
+                ball_hunt = True
+            elif received_string == 'BP_btn':
+                bp_button_hunt = True
+            elif received_string == 'OG_btn':
+                og_button_hunt = True
+            elif received_string == 'basket':
+                basket_hunt = True
+            return jsonify({"status": "success", "message": "flag recieved"}), 200
+        else:
+            return jsonify({"status": "error", "message": "No flag received"}), 400
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/recover_angle', methods=['POST'])
+def recover_angle_handler():
+    global recover_angle
+    try:
+        data = request.json
+        received_string = [data.get('axis'), data.get('angle')]
+
+        if received_string:
+            recover_angle = received_string
+            return jsonify({"status": "success", "message": "recover angle recieved"}), 200
+        else:
+            return jsonify({"status": "error", "message": "No recover angle received"}), 400
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -52,15 +89,15 @@ class Solution():
             turn_on_red_light_via_i2c()
         init_pose()
 
-        self.linear_velocity = 0.2 # 0.25
-        self.angular_velocity = 1.4 # 1.58
-        self.motor_pwm = 40
+        self.linear_velocity = 0.1175 
+        self.angular_velocity = 0.62
+        self.motor_pwm = 25
 
         self.direction = 'N'
 
         self.pose = None
 
-        self.pid = PID(0.03, 0.09, 0.0005)
+        self.pid = PID(0.04, 0, 0)
         self.pid.setSampleTime(0.005)
         self.pid.setPoint(320)
         
@@ -93,6 +130,7 @@ class Solution():
         while abs(current_time - last_time) < dt:
             current_time = time.time()
         stop()
+        time.sleep(0.5)
     
     def move_forward(self, distance):
         dt = distance / self.linear_velocity
@@ -102,9 +140,10 @@ class Solution():
         while abs(current_time - last_time) < dt:
             current_time = time.time()
         stop()
+        time.sleep(0.5)
 
     def spin(self):
-        global trajectory
+        global trajectory, cube_hunt, recover_angle
         while True:
             if len(trajectory) > 1:
                 self.pose = trajectory[0]
@@ -180,37 +219,46 @@ class Solution():
                             pass
                         dst = abs(target[1] - self.pose[1])
                 self.move_forward(dst / 100)
-            else:
-                if CUBE_HUNT:
-                    self.shutdown(None, None)
-                    ir = get_ir()
-                    if ir[2] == 0:
-                        stop()
-                        grab_item(0.14)
-                        init_pose()
-                        self.shutdown(None, None)
-                    _, frame = self.cap.read()
-                    frame = cv2.rotate(frame, cv2.ROTATE_180)
-                    y, x, _ = frame.shape
-                    # frame = frame[int(0.5 * y):y, int(0.25 * x):x - int(0.25 * x)]
-                    frame = frame[int(0.5 * y):y, 0:x]
-                    frame = align_histogram(frame)
-                    frame = white_balance(frame)
-                    if RECORD:
-                        self.out.write(frame)
-                    contour = apply_mask(frame)
-                    if  contour is not None:
-                        x, _ = object_center(contour)
-                        self.pid.update(x)
-                        print(self.pid.output)
-                        left_vel = self.motor_pwm -  2 * self.pid.output
-                        right_vel = self.motor_pwm + 2 * self.pid.output
-                        set_velocities(left_vel, K * right_vel)           
+
+            if recover_angle is not None:
+                self.rotate(recover_angle[1])
+                self.direction = recover_angle[0]
+                recover_angle = None
+
+            if cube_hunt:
+                ir = get_ir()
+                if ir[2] == 0:
+                    stop()
+                    grab_item(0.14)
+                    init_pose()
+                    cube_hunt = False
+                    continue
+                _, frame = self.cap.read()
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
+                y, x, _ = frame.shape
+                # frame = frame[int(0.5 * y):y, int(0.25 * x):x - int(0.25 * x)]
+                frame = frame[int(0.5 * y):y, 0:x]
+                frame = align_histogram(frame)
+                frame = white_balance(frame)
+                if RECORD:
+                    self.out.write(frame)
+                contour = apply_mask(frame)
+                if  contour is not None:
+                    x, _ = object_center(contour)
+                    self.pid.update(x)
+                    print(self.pid.output)
+                    left_vel = self.motor_pwm -  2 * self.pid.output
+                    right_vel = self.motor_pwm + 2 * self.pid.output
+                    set_velocities(left_vel, K * right_vel)           
 
 if __name__ == "__main__":
     if TELEOP:
         curses.wrapper(teleop)
     else:
         sol = Solution()
-        threading.Thread(target= lambda: app.run(host='192.168.8.254', port=5000, debug=False)).start()
-        sol.spin()
+        threading.Thread(target= lambda: app.run(host='192.168.2.53', port=5000, debug=False)).start()
+        # sol.rotate(-np.pi / 2)
+        # sol.spin()
+        # set_velocities(-25, K * 25)
+        # time.sleep(20)
+        # stop()

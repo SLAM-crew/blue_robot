@@ -6,7 +6,7 @@ from cv import align_histogram, white_balance
 from team_light import turn_on_green_light_via_i2c, turn_on_red_light_via_i2c
 from manipulator import init_pose
 
-def teleop(stdscr, GREEN=True, RECORD=False, K=0.84):
+def teleop(stdscr, GREEN=True, RECORD=False, K=0.75):
     if GREEN:
             turn_on_green_light_via_i2c()
     else:
@@ -23,7 +23,7 @@ def teleop(stdscr, GREEN=True, RECORD=False, K=0.84):
 
     stdscr.addstr(0, 0, "Управляйте роботом с помощью клавиш W, A, S, D. Для выхода нажмите 'q'.")
 
-    speed = 40
+    speed = 25
     
     while True:
         if RECORD:

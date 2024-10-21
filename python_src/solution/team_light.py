@@ -38,3 +38,5 @@ def turn_on_green_light_via_i2c():
         sendbuf = [0xff, group_2 + 3, led_num, color_green, 0xff]  # Формируем команду
         i2c.writedata(i2c_address, sendbuf)  # Отправляем данные через I2C
         time.sleep(0.005)  # Небольшая задержка между включениями
+
+# turn_on_green_light_via_i2c()
