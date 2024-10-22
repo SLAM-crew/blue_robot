@@ -15,15 +15,16 @@ from xr_pid import PID
 import threading
 
 # CHANGE BEFORE START
-GREEN = True
-ROBOT_IP = '192.168.8.254' # 192.168.2.53
-DIRECTION = "N"
+GREEN = False
+ROBOT_IP = '192.168.2.12' # 192.168.2.53
+DIRECTION = "S"
 
 RECORD = False
 TELEOP = False
-K = 0.81 #0.75
+K = 0.75
 
 cube_hunt, ball_hunt = False, False
+init = True
 flag = None
 trajectory = []
 recover_angle = None
@@ -73,7 +74,7 @@ class Solution():
         init_pose()
 
         self.linear_velocity = 0.1175 
-        self.angular_velocity = 0.81 #0.62 #0.76 
+        self.angular_velocity = 0.79 #0.62 #0.76 
         self.motor_pwm = 25
 
         self.direction = DIRECTION
@@ -140,7 +141,7 @@ class Solution():
 
      
     def spin(self):
-        global trajectory, cube_hunt, recover_angle, ball_hunt, flag
+        global trajectory, cube_hunt, recover_angle, ball_hunt, flag, init
         while True:
             # start_time = time.time()
             # left_ik = get_ir()[0]
@@ -238,6 +239,11 @@ class Solution():
             #     continue
 
             if ball_hunt:
+                if init:
+                    set_velocities(-self.motor_pwm, -self.motor_pwm)
+                    time.sleep(1.5)
+                    stop()
+                    init = False
                 ir = get_ir()
                 if ir[2] == 0:
                     stop()
@@ -263,8 +269,15 @@ class Solution():
                     right_vel = self.motor_pwm + 2 * self.pid.output
                     set_velocities(left_vel, K * right_vel)  
                     # print(time.time() - start_time)
+                else:
+                    self.rotate(np.pi / 6)
 
             if cube_hunt:
+                if init:
+                    set_velocities(-self.motor_pwm, -self.motor_pwm)
+                    time.sleep(1.5)
+                    stop()
+                    init = False
                 ir = get_ir()
                 if ir[2] == 0:
                     stop()
@@ -289,7 +302,10 @@ class Solution():
                     left_vel = self.motor_pwm -  2 * self.pid.output
                     right_vel = self.motor_pwm + 2 * self.pid.output
                     set_velocities(left_vel, K * right_vel)  
-                    # print(time.time() - start_time)            
+                    # print(time.time() - start_time)      
+                else:
+                    self.rotate(np.pi / 6)
+      
 
 if __name__ == "__main__":
     if TELEOP:
@@ -298,4 +314,5 @@ if __name__ == "__main__":
         sol = Solution()
         threading.Thread(target= lambda: app.run(host=ROBOT_IP, port=5000, debug=False)).start()
         # sol.rotate(np.pi / 2)
+        # sol.move_forward(1)
         sol.spin()
