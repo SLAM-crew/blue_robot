@@ -48,12 +48,12 @@ def align_histogram(frame):
     return Inew_1
 
 def apply_mask(frame):
-    frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
 
     blurVal = 3
     frame_hsv = cv2.medianBlur(frame_hsv, 1 + blurVal * 2)
 
-    mask = cv2.inRange(frame_hsv, (0, 100, 80), (15, 255, 255))
+    mask = cv2.inRange(frame_hsv, (0, 140, 118), (255, 255, 255))
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
@@ -85,3 +85,27 @@ def object_center(contour):
         cx = int(M['m10'] / M['m00'])
         cy = int(M['m01'] / M['m00'])
         return [cx, cy]
+
+def detect_keypoints(image):
+    feature_params = dict(maxCorners=100, qualityLevel=0.3, minDistance=7, blockSize=7)
+    keypoints = cv2.goodFeaturesToTrack(image, mask=None, **feature_params)
+    return keypoints
+
+def track_keypoints(prev_img, curr_img, prev_pts):
+    lk_params = dict(winSize=(15, 15), maxLevel=2,
+                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 100, 0.01)) # 10 0.03
+    
+    curr_pts, status, err = cv2.calcOpticalFlowPyrLK(prev_img, curr_img, prev_pts, None, **lk_params)
+    
+    good_prev_pts = prev_pts[status == 1]
+    good_curr_pts = curr_pts[status == 1]
+    
+    return good_prev_pts, good_curr_pts
+
+def estimate_rotation(prev_pts, curr_pts):
+    H, _ = cv2.estimateAffinePartial2D(prev_pts, curr_pts)
+    
+    if H is not None:
+        rotation_angle = np.arctan2(H[0, 1], H[0, 0])
+        return rotation_angle
+    return None
